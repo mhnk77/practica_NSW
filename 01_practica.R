@@ -191,17 +191,7 @@ dta_matched_nn %>%
 # Weighted pr score   --------------------------------------------------
 
 #esto falta!
-mod_match_wt <- matchit(frml, method = 'nearest', data = new_dta)
-
-dta_matched <- match.data(mod_match_wt)
-
-dta_matched %>% 
-  group_by(treat = factor(treat, levels = c(1,0))) %>% 
-  summarise(across(where(is.numeric), mean),
-            sample_size = n()) %>% 
-  select(treat, re78) %>% 
-  summarise(ATE = re78 -lead(re78)) %>% 
-  drop_na()
+## todo lo necesario está en 02_pr_score_weighting.R
 
 # Coarsened exact -----------------------------------------------
 
