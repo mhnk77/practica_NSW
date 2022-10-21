@@ -10,9 +10,9 @@ penalty_df <- pr_df %>%
 # non-normalized weights --------------------------------------------------
 
 wt_df <- penalty_df %>% 
-  mutate(y1 = d1 * re78, #d1 * re78 (penalty de FN mult por el salario resultante)
+  mutate(y1 = d1*re78, #d1 * re78 (penalty de FN mult por el salario resultante)
          y0 = d0*re78, #d0 * re78
-         ht = y1 - y0)
+         ht = y1 - y0) #ATT
 
 wt_df %>% 
   pull(ht) %>% 
