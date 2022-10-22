@@ -209,7 +209,7 @@ penalty_df <- pr_df %>%
   mutate(d1 = treat/pr_score, #0 cuando treat=0, grande cuando treat=1 y pr_score~0 (penaliza FN)
          d0 = (1-treat)/(1-pr_score)) #0 cuando treat=1, grande cuando treat=0 y pr_score~1 (penaliza FP)
 
-# non-normalized weights --------------------------------------------------
+# non-no}rmalized weights --------------------------------------------------
 
 wt_df <- penalty_df %>% 
   mutate(y1 = d1*re78, #d1 * re78 (penalty de FN mult por el salario resultante)
@@ -264,15 +264,14 @@ wt_norm_df_trimmed <- penalty_trimmed %>%
          norm = y1 - y0)
 
 
-WT_ATE<- wt_norm_df_trimmed %>% 
+wt_norm_df_trimmed %>% 
   pull(norm) %>% 
   mean()
-
-kable(WT_ATE)
 ```
 
 
 #### b) Nearest-neighbor matching
+
 ```{r}
 mod_match_nn <- matchit(frml, method = 'nearest', data = new_dta,
                         distance = 'glm', link = 'logit')
@@ -310,6 +309,13 @@ kable(CEM_ATE)
 ```
 
 
+Recordemos que el efecto causal real usando los datos experimentales es de $1,794. Consideramos que el método de weighting on propensity scores, una vez que se normalizan los datos, tiene el valor más similiar el efecto real causal. Asímismo, el método de VecinosMás cercanos estima resultados similares al valor real. El método de Coarsened Exact Matching estima un resultado mayor al valor real. 
+
+
+## Bibliografía
+
+- [Causal Inference: The mixtape](https://mixtape.scunning.com/)
+- Rajeev H. Dehejia, Sadek Wahba; Propensity Score-Matching Methods for Nonexperimental Causal Studies. The Review of Economics and Statistics 2002; 84 (1): 151–161. doi: https://doi.org/10.1162/003465302317331982
 
 
 
