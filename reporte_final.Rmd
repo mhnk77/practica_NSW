@@ -28,7 +28,7 @@ Para el ejercicio se utilizan los datos del experimento del mercado laboral del 
 
 Por otro lado, se utilizan controles experiementales para obtener una estimación benchmark para el impacto del tratamiento uniendo a las unidades de tratamiento del experimento con la unidades de comparación de la *Population Survey of Income Dynamics (PSID)* y del *Current Population Survey (CPS)*.
 
-Se cargan los datos que su utilizarán en la práctica y se contruye el set de datos utilizado en el paper. 
+Se cargan los datos que su utilizarán en la práctica y se contruye el set de datos utilizado en el paper agregando las variables necesarias para ajustar el modelo. 
 
 ```{r}
 cps <- read_dta("https://raw.github.com/scunning1975/mixtape/master/cps_mixtape.dta") 
@@ -56,139 +56,128 @@ tabla1 <- nsw_dw_cpscontrol %>%
   summarise(across(where(is.numeric), mean),
             sample_size = n()) %>% 
    pivot_longer(names_to = 'variable', values_to = 'values', cols = -treat) %>% 
-   pivot_wider(names_from = treat, values_from = values)
+   pivot_wider(names_from = treat, values_from = values) %>% 
+  select(variable, 'Tratamiento' = 2, 'Control' = 3)
 
-names(tabla1)[2]<-"Tratamiento"
-  names(tabla1)[3]<-"Control"
-
-kable(tabla1)
 ```
 
-En la tabla 1 se muestra la media de todas la características de la muestra de datos utilizada para el análisis. Como se establecer en el paper, se muestra que el debido al selección aleatorio para el grupo de control y de tratamiento, no existen diferencias siginificativas de las variable entre los grupos. 
+
+```{r, echo=FALSE}
+kable(tabla1, digits = 2)
+```
+
+En la tabla 1 se muestra la media de todas la características de la muestra de datos utilizada para el análisis. Existen diferencias entre la tabla del paper y la tabla obtenida con estos datos únicamente en la variable `re75`: *Real earnings 12 months before training*.
+Vale la pena mencionar que en el paper cuentan con la variable de núm de hijos, mientras que en los datos provistos no está disponible.
+
+En cuanto la comparación entre grupos (Treatment vs Control), las diferencias más importantes se aprecian en `no degree`: *Proportion of school dropouts*, `hisp`: *Proportion of Hispanics*, `marr`: *Married*.
 
 ### 2. Calcule el ATE del experimento.   
 
-Se obtiene que el efecto del NSW job-training program sobre los ingresos reales fue un incremento de $1,794.343. (renglón 1 de la tabla 2).
+Se obtiene que el efecto del NSW job-training program sobre los ingresos reales fue un incremento de $1,794.343, calculado como la diferencia de los promedios del ingreso real en 1978 (año de comparación) (renglón 1 de la tabla 2).
 
 ```{r}
 ATE<-tabla1 %>% 
   filter(variable == 're78') %>% 
-  summarise(ATE = Tratamiento-Control) 
-
-kable(ATE)
+  summarise(ATE = Tratamiento - Control)
 ```
 
-Se compara el renglón del Full CPS de la tabla 2:
 
-```{r}
-Full_CPS <-nsw_dw_cpscontrol %>% 
-  filter(data_id == "CPS1") %>% 
-  select(-matches('sq|cube|interaction')) %>% 
-  group_by(treat = factor(treat, levels = c(1,0))) %>% 
-  summarise(across(where(is.numeric), mean),
-            sample_size = n()) %>% 
-  pivot_longer(names_to = 'variable', values_to = 'values', cols = -treat) %>% 
-  pivot_wider(names_from = treat, values_from = values)%>%
-  mutate(across(where(is.numeric), ~round(., 2))) %>% 
-  data.frame()
+```{r, echo = FALSE}
+kable(ATE, digits = 2)
+```
 
-names(Full_CPS)[2]<- "Full CPS"
+Lo cual coincide con el renglón 1 de la tabla 2:
 
-kable(Full_CPS)
-
+```{r, echo = FALSE}
+knitr::include_graphics('imgs/01_tabla2_r1.png')
 ```
 
 
 ### 3. Siguiendo el procedimiento de los autores, ahora utilice la información de la encuesta CPS como grupo de control no experimental. Agregue este conjunto de datos a los datos experimentales y estime el propensity score usando un modelo logit.
 
-* Se define el modelo: 
+Los datos del CPS se agregaron desde el inicio, para evitar repetir el proceso de creación de variables. Sin embargo, es importante notar que es necesario eliminar los datos del PSID, es decir, los datos en donde `treat == 0` provenientes del dataset *Dehejia-Wahba Sample*  
 
 ```{r}
-## NSW vs CPS
+dta_mod <- nsw_dw_cpscontrol %>% 
+  filter(!(data_id == 'Dehejia-Wahba Sample' & treat == 0))
+```
 
-psid_cov <- nsw_dw_cpscontrol %>% 
+Definimos la fórmula con las variables:
+$$Age, Age^2, Age^3, School, School^2 , Married, No degree, Black, Hisp, RE74, RE75, U74, U75, School*RE74$$
+Al igual que se realizó en el paper.
+
+```{r, message=FALSE}
+psid_cov <- dta_mod %>% 
   select(age:re75, agesq:interaction1) %>% 
   names() 
 
-(frml <- paste0(psid_cov, collapse = '+') %>% 
+frml <- paste0(psid_cov, collapse = '+') %>% 
   paste('treat', ., sep = '~') %>% 
-  as.formula()) 
+  as.formula()
 
-
-logit_cps <- nsw_dw_cpscontrol %>% 
-  filter(!(data_id == 'Dehejia-Wahba Sample' & treat == 0)) %>% #quitar los PSID, i.e. comparar NSW vs CPS
-  glm(frml, family = binomial(link = 'logit'),
-            data = .)
-logit_cps %>% summary()
+frml
 ```
-Se calcula el *propensity score*: 
+
+Se define el modelo:
 
 ```{r}
-pr_df <- nsw_dw_cpscontrol %>% 
-  filter(!(data_id == 'Dehejia-Wahba Sample' & treat == 0)) %>% #quitar los PSID, i.e. comparar NSW vs CPS
+logit_cps <- glm(frml, family = binomial(link = 'logit'),
+            data = dta_mod)
+  
+```
+Se calcula el *propensity score* como las predicciones del modelo sobre el conjunto de datos con el que se ajustó: 
+
+```{r}
+
+pr_df <- dta_mod %>% 
   mutate(pr_score = logit_cps$fitted.values)
 
+```
 
-ps<- pr_df %>% 
-  group_by(data_id,treat) %>% 
-  summarise(across(pr_score, mean)) 
-
-kable(ps)
-
+```{r, echo = FALSE}
+pr_df
 ```
 
 
-Los resultados del propensity score, coinciden con los resultados del libro. Se puede observar que la mediana del propensity score es 0.4.
-
-```{r}
-ps_percentil<-pr_df %>% 
-  group_by(data_id) %>% 
-  summarise(
-    p01 = quantile(pr_score, 0.01),
-    p05 = quantile(pr_score, 0.05),
-    p10 = quantile(pr_score, 0.10),
-    p25 = quantile(pr_score, 0.25),
-    p50 = quantile(pr_score, 0.50),
-    p75 = quantile(pr_score, 0.75),
-    p90 = quantile(pr_score, 0.90),
-    p95 = quantile(pr_score, 0.95),
-    p99 = quantile(pr_score, 0.99)
-    
-    ) %>% 
-  pivot_longer(names_to = 'percentiles', values_to = 'values', cols = -data_id) %>% 
-  pivot_wider(names_from = data_id, values_from = values)
-
-kable(ps_percentil)
-```
-
-### 4. Mediante la construcción del histograma para ambos grupos, analice la región del *commun support*.
+### 4. Mediante la construcción del histograma para ambos grupos, analice la región del *common support*.
 
 ```{r, warning=FALSE}
-pr_df%>% 
-  ggplot(aes(pr_score, after_stat(density)), fill= factor(treat)) +
+pr_df %>% 
+  mutate(treat = ifelse(treat==0, 'Control', 'Treatment')) %>% 
+  ggplot(aes(pr_score, after_stat(density))) +
   geom_histogram(binwidth = 0.02)+ #el valor del eje y cambia de acuerdo al valor de binwidth
   facet_wrap(~treat)+
-  xlim(c(-0.1,1.02)) + xlab("Propensity Score")
+  xlim(c(-0.1,1.02)) + xlab("Propensity Score")+
+  theme_bw()
 ```
-Se puedo observar que para el intervalo del propensity score existen unidades en el grupo de tratamiento con un propensity score de mayor a 0.25, mientras que no se observan unidades en ese intervalo en el grupo de control. Es decir, en general no se muestra una superposición de los propensity scores de los grupos.  
+
+Los *propensity scores* o *p-scores* de las observaciones del grupo de control se distribuyen de manera relativamente uniforme a lo largo del intervalo $[0,.95]$. En contraste con el grupo de control, en el cual la gran mayoría de los *p-scores* se concentran en $[0,0.01]$.
+
+Esto quiere decir que hay muy pocas observaciones que compartan *p-scores* entre ambos grupos.
+
+En el paper, descartan todas las observaciones del grupo de control cuyo *p-score* es menor que el valor mínimo de *p-scores* del grupo de control.
+
+De esta manera, se excluye la gran mayoría de las observaciones que se concentraban en la primer barra del histograma:
+
+```{r}
+(min_treated <- pr_df %>% 
+  filter(treat == 1) %>% 
+  summarise(min = min(pr_score)) %>% 
+  pull(min))
+```
 
 
 ```{r}
-min_treated <- pr_df %>% 
-  group_by(treat) %>% 
-  summarise(min = min(pr_score)) %>% 
-  filter(treat == 1) %>% 
-  pull(min)
-
 pr_df %>% 
-   filter(pr_score >= min_treated) %>% ##excluimos 12136 con este filtro
-  ggplot(aes(pr_score, after_stat(density), colour = factor(treat), group = factor(treat)))+
-  geom_histogram(fill="white", position = "dodge",bins = 19, alpha = 0.95)+  guides(fill = guide_legend(title = "Grupo"),
-         colour = guide_legend(title = "Grupo"))
+  mutate(treat = ifelse(treat==0, 'Control', 'Treatment')) %>% 
+  filter(pr_score >= min_treated) %>% ##excluimos 12136 con este filtro
+  ggplot(aes(pr_score, after_stat(density), fill = treat, group = treat))+
+  geom_histogram(position = "dodge",bins = 19, alpha = 0.95)+
+  theme_bw()
 
 ```
 
-En la gráfica anterior se muestra que filtrando el propepensity score mínimo del grupo de tratamiento, se observa un common support entre los grupos. Hay más sobreposición entre los grupos. 
+Incluso con el filtro aplicado, se observa que aún hay muy pocas observaciones del grupo de control que tengan un *p-score* de 0.01 o más.
 
 ###  5. Utilice el procedimiento de matching bajo los siguientes criterios para calcular el ATE, compare sus resultados y concluya el efecto del tratamiento en el contexto del problema.
 
@@ -199,78 +188,72 @@ new_dta <-nsw_dw_cpscontrol %>%
   filter(!(data_id == 'Dehejia-Wahba Sample' & treat == 0)) 
 ```
 
-
 #### a)  Weighting on the propensity score
 
-```{r}
-N <- nrow(pr_df)
 
-penalty_df <- pr_df %>% 
-  mutate(d1 = treat/pr_score, #0 cuando treat=0, grande cuando treat=1 y pr_score~0 (penaliza FN)
-         d0 = (1-treat)/(1-pr_score)) #0 cuando treat=1, grande cuando treat=0 y pr_score~1 (penaliza FP)
+Partimos de que:
 
-# non-no}rmalized weights --------------------------------------------------
-
-wt_df <- penalty_df %>% 
-  mutate(y1 = d1*re78, #d1 * re78 (penalty de FN mult por el salario resultante)
-         y0 = d0*re78, #d0 * re78
-         ht = y1 - y0) #ATT
-
-wt_df %>% 
-  pull(ht) %>% 
-  mean()
-
-# Normalized weights ------------------------------------------------------
-
-s1 <- sum(penalty_df$d1)
-s0 <- sum(penalty_df$d0)
-
-wt_norm_df <- penalty_df %>% 
-  mutate(y1 = (d1*re78)/(s1/N),
-         y0 = (d0*re78)/(s0/N),
-         norm = y1 - y0)
-
-
-wt_norm_df %>% 
-  pull(norm) %>% 
-  mean()
-
-# trimming propensity score -----------------------------------------------
-
-penalty_trimmed <- pr_df %>% 
-  filter(between(pr_score, 0.1,0.9))%>% 
-  mutate(d1 = treat/pr_score, #0 cuando treat=0, grande cuando treat=1 y pr_score~0 (penaliza FN)
-         d0 = (1-treat)/(1-pr_score))
-
-# Non normalized
-wt_df_trimmed <- penalty_trimmed %>% 
-  mutate(y1 = d1 * re78, #d1 * re78 (penalty de FN mult por el salario resultante)
-         y0 = d0 *re78, #d0 * re78
-         ht = y1 - y0)
-
-wt_df_trimmed %>% 
-  pull(ht) %>% 
-  mean()
-
-#Normalized
-
-N_tr <- nrow(penalty_trimmed)
-s1_tr <- sum(penalty_trimmed$d1)
-s0_tr <- sum(penalty_trimmed$d0)
-
-wt_norm_df_trimmed <- penalty_trimmed %>% 
-  mutate(y1 = (d1*re78)/(s1_tr/N_tr),
-         y0 = (d0*re78)/(s0_tr/N_tr),
-         norm = y1 - y0)
-
-
-wt_norm_df_trimmed %>% 
-  pull(norm) %>% 
-  mean()
+```{r, echo = FALSE}
+knitr::include_graphics('imgs/02_ate_weights.png')
 ```
 
+La prueba de esta igualdad:
+
+```{r, echo = FALSE}
+knitr::include_graphics('imgs/02_ate_weights.png')
+```
+
+De esta manera, entonces, el estimador del ATE utilizando estimadores muestrales es:
+
+```{r, echo = FALSE}
+knitr::include_graphics('imgs/02_ate_weights.png')
+```
+
+Donde:
+
+* $$ N = $$ `tamaño de muestra`
+
+* $$ D =$$ `treat`
+
+* $$ Y = $$ `re78`
+
+* $$ \hat{p}(X_i) = $$ `propensity score`
+
+De esta manera, calculamos el ATE con nuestra muestra:
+
+```{r}
+ATE_wt <- pr_df %>% 
+  select(treat, pr_score, re78) %>% 
+  mutate(ate_i = re78*(treat - pr_score)/(pr_score * (1-pr_score))) %>% 
+  summarise(ATE = sum(ate_i)/nrow(.))
+```
+
+```{r, echo = FALSE}
+kable(ATE_wt, digits = 2)
+```
+
+Tenemos que -11876.79 está muy alejado del 1794 que fue reportado en el paper. Esto se debe a que, al estar utilizando el inverso de las probabilidades, cuando `p-score` es muy cercano a $0$ o a $1$, el valor del ponderador crece excesivamente, haciendo que la suma final se haga con valores extremos, desestabilizando el cálculo en general.
+
+Una manera de lidiar este problema es *recortando* los valores más extremos, es decir, conservando los valores del *p-score* que se encuentren en el intervalo $[0.1,0.9]$ 
+
+De esta manera, lo calculamos como:
+```{r}
+ATE_wt <- pr_df %>% 
+  select(treat, pr_score, re78) %>% 
+  filter(between(pr_score, 0.1,0.9)) %>% 
+  mutate(ate_i = re78*(treat - pr_score)/(pr_score * (1-pr_score))) %>% 
+  summarise(ATE = sum(ate_i)/nrow(.))
+```
+
+```{r, echo = FALSE}
+kable(ATE_wt, digits = 2)
+```
+
+Lo cual nos da un valor mucho más cercano al 1794 reportado anteriormente.
 
 #### b) Nearest-neighbor matching
+
+Este método esta precargado en la librería `matchit`.
 
 ```{r}
 mod_match_nn <- matchit(frml, method = 'nearest', data = new_dta,
@@ -285,13 +268,19 @@ N_ATE<- dta_matched_nn %>%
   select(treat, re78) %>% 
   summarise(ATE = re78 -lead(re78)) %>% 
   drop_na()
+```
 
+```{r, echo = FALSE}
 kable(N_ATE)
 ```
+
+Con el método del vecino más cercano, tenemos un ATE bastante cercano al valor reportado en el paper.
+
 #### c) Coarsened exact matching
 
-```{r}
+Este método esta precargado en la librería `matchit`.
 
+```{r}
 mod_match_cem <- matchit(frml, method = 'cem', data = new_dta,
                          distance = 'glm', link = 'logit', estimand = 'ATE')
 
@@ -304,12 +293,14 @@ CEM_ATE<- dta_matched_cem %>%
   select(treat, re78) %>% 
   summarise(ATE = re78 -lead(re78)) %>% 
   drop_na()
-  
-kable(CEM_ATE)
 ```
 
 
-Recordemos que el efecto causal real usando los datos experimentales es de $1,794. Consideramos que el método de weighting on propensity scores, una vez que se normalizan los datos, tiene el valor más similiar el efecto real causal. Asímismo, el método de VecinosMás cercanos estima resultados similares al valor real. El método de Coarsened Exact Matching estima un resultado mayor al valor real. 
+```{r, echo = FALSE}
+kable(CEM_ATE)
+```
+
+El método de Coarsened Exact Matching estima un resultado mayor al valor real. 
 
 
 ## Bibliografía
